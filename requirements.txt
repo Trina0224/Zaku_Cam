@@ -1,0 +1,4 @@
+flask
+picamera2
+pillow
+numpy

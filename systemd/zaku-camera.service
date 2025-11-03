@@ -1,0 +1,25 @@
+[Unit]
+Description=Zaku Web Camera (PCA9685 Controller)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=piuser
+Group=piuser
+WorkingDirectory=/home/piuser/zaku-camera-system/app
+ExecStart=/usr/bin/python3 /home/piuser/zaku-camera-system/app/app.py
+Restart=always
+RestartSec=5
+ExecStartPre=/bin/sleep 10
+
+Environment=ZAKU_CONT_SEC=180
+Environment=ZAKU_NAS_HOST=nas01.local
+Environment=ZAKU_NAS_USER=piuser
+Environment=ZAKU_NAS_PATH=/mnt/storage/cam_uploads/incoming/
+
+ProtectSystem=full
+ProtectHome=false
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

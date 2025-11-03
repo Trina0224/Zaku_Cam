@@ -1,0 +1,14 @@
+[Unit]
+Description=Camera ZIP Receiver
+After=network.target local-fs.target
+
+[Service]
+User=piuser
+Group=piuser
+ExecStart=/usr/bin/python3 /usr/local/bin/receive_cam_zip.py
+Restart=always
+RestartSec=5
+WorkingDirectory=/mnt/storage/cam_uploads
+
+[Install]
+WantedBy=multi-user.target
