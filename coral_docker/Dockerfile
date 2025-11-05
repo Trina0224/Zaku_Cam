@@ -46,10 +46,11 @@ PY
 # App
 COPY detect_person.py /app/detect_person.py
 COPY batch_scan.py /app/batch_scan.py
-
+COPY worker.py /app/worker.py
 
 # Default:
-CMD ["python3", "/app/batch_scan.py"]
+CMD ["python3", "/app/worker.py"]
+#CMD ["python3", "/app/batch_scan.py"]
 
 
 # Self-test on bundled image
@@ -58,3 +59,6 @@ CMD ["python3", "/app/batch_scan.py"]
 #     "--labels","/app/test_data/coco_labels.txt", \
 #     #"--image","/app/test_data/face.jpg", \
 #     "--threshold","0.3"]
+
+
+### Rebuild this docker command: " docker build -t coral-py39 . "
