@@ -1,4 +1,4 @@
-# Nas01 NAS Node — Stepdown Runbook (English)
+# zaku02 NAS Node — Stepdown Runbook (English)
 
 **Host:** `nas01` (Raspberry Pi 5 or equivalent NAS node)  
 **OS:** Raspberry Pi OS Trixie 2025 Oct build (stable on Pi5)  
