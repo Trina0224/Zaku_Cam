@@ -131,6 +131,47 @@ Extracted 20251102-142330.zip → /mnt/storage/cam_uploads/processed/20251102-14
 
 ## 4) Rsync Uploads from Cameras
 
+### 4. What we did on Zaku02 (Date: YYYY-MM-DD)
+
+1. Created a **Dockerfile** using Python 3.9 and installed the Coral USB Accelerator runtime (`libedgetpu1-std`), `python3-pycoral`, and Pillow.  
+2. Developed `worker.py` (monitor loop) and control script `coral_worker.sh` to:  
+   - Detect humans in images using the EdgeTPU  
+   - Move entire timestamp folders from `/processed` → `/events` if a human is found  
+   - Record per-image results (human/no, confidence) into daily CSV logs in `/logs`.  
+3. Set up a **cron job** to clean `/mnt/nvme0/cam_uploads/processed` folders older than 7 days.  
+4. Verified system health:  
+   - Coral USB LED blinking = TPU recognized  
+   - Worker picks up newest stable folder and moves correctly when human appears  
+   - Logs appear under `/logs/events_YYYYMMDD.csv`.  
+
+#### Prerequisites / Host Setup Notes  
+- Docker must be installed and the user has privileges to run containers.  
+- Host directories must be mounted into the container:  
+/mnt/nvme0/cam_uploads/processed → /data
+/mnt/nvme0/cam_uploads/events → /events
+/mnt/nvme0/cam_uploads/logs → /logs
+
+- USB bus must be passed into container with: `--privileged -v /dev/bus/usb:/dev/bus/usb` so the Coral USB device is accessible.  
+- Ensure directories exist on host and correct owner/permissions are set (container runs as root by default).  
+
+#### Control Script Usage  
+```bash
+./coral_worker.sh start   # start the worker container  
+./coral_worker.sh logs    # tail live logs  
+./coral_worker.sh stop    # stop and remove the container  
+./coral_worker.sh status  # display container status  
+Notes for Operation
+
+If no new folder appears, the service waits. It uses a “stable” threshold (default 15 seconds) to ensure the folder is no longer being written to before detection.
+
+If the Coral USB LED is not blinking, then the device may not be recognized by the container — check lsusb inside container and confirm permissions.
+
+The threshold for detection (default 0.30) may be adjusted via the THRESHOLD environment variable in coral_worker.sh.
+
+The cron cleanup runs daily at 02:30 and deletes folders in /processed older than 7 days:
+30 2 * * * find /mnt/nvme0/cam_uploads/processed -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} +
+
+
 ### 4.1 Expected Source
 Each camera (cam01, zaku03, …) performs an rsync push:
 ```
