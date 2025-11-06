@@ -1,0 +1,59 @@
+//web app
+//for anyone
+//require Google Photo API
+
+
+const ROOT_FOLDER_NAME = 'ターゲットロック';   // Drive Folder
+const USE_DATE_SUBFOLDER = true;               // via Date YYYY-MM-DD
+
+function doGet(e) {
+  // GET testing：?init=1 will create a folder ，return ID，for debugging
+  if (e && e.parameter && e.parameter.init == '1') {
+    const root = _getOrCreateFolder_(ROOT_FOLDER_NAME);
+    return _text('INIT_OK folderId=' + root.getId());
+  }
+  return _text('OK');
+}
+
+function doPost(e) {
+  try {
+    if (!e || !e.postData) return _text('ERR no body');
+
+    // Decode by Base64 （Raspberry Pi  `base64 -w0`）
+    const body = e.postData.getDataAsString();
+    if (!body || body.length < 4) return _text('ERR empty body');
+    const bytes = Utilities.base64Decode(body);
+
+    const filename = (e.parameter && e.parameter.filename) || ('zaku_' + Date.now() + '.jpg');
+
+    // Create folder
+    const root = _getOrCreateFolder_(ROOT_FOLDER_NAME);
+    const tz = Session.getScriptTimeZone() || 'Asia/Tokyo';
+    const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+    const parent = USE_DATE_SUBFOLDER ? _getOrCreateSubFolder_(root, today) : root;
+
+    // write file
+    const blob = Utilities.newBlob(bytes, 'image/jpeg', filename);
+    const file = parent.createFile(blob);
+
+    return _text('OK fileId=' + file.getId());
+  } catch (err) {
+    return _text('ERR ' + err);
+  }
+}
+
+function _getOrCreateFolder_(name) {
+  const it = DriveApp.getFoldersByName(name);
+  if (it.hasNext()) return it.next();
+  return DriveApp.createFolder(name);
+}
+
+function _getOrCreateSubFolder_(parent, name) {
+  const it = parent.getFoldersByName(name);
+  if (it.hasNext()) return it.next();
+  return parent.createFolder(name);
+}
+
+function _text(s) {
+  return ContentService.createTextOutput(s).setMimeType(ContentService.MimeType.TEXT);
+}
