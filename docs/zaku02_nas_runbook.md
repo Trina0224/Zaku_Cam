@@ -222,4 +222,5 @@ sudo rm -rf /mnt/storage/cam_uploads/processed/*/*
 ## 7) Change Log
 
 - **2025‑11‑02** – Initial deployment of `receive_cam_zip.py` and `cam-receiver.service`  
-- **2025‑11‑02** – Verified upload from Cam01 successful, ZIP auto‑extracted, and service persists across reboot.  
+- **2025‑11‑02** – Verified upload from Cam01 successful, ZIP auto‑extracted, and service persists across reboot.
+- **2025-11-05** - Create a file called ".env.zaku02" aside Dockerfile. It's a one line file, only with this line: GAS_UPLOAD_URL=https://script.google.com/macros/s/XXXX(created by script.new )/exec
