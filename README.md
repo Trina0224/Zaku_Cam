@@ -1,7 +1,7 @@
 # Zaku Camera System (Sanitized)
 
 A tiny Flask + Picamera2 app that serves an MJPEG preview, pans a servo via PCA9685, captures high‑res snapshots, 
-and runs a **continuous capture → ZIP → rsync to NAS** pipeline.
+and runs a **continuous capture → ZIP → rsync to NAS** pipeline. Also upload the pictures with "human" to your Google Drive.
 
 ## Quick start (Cam node)
 
