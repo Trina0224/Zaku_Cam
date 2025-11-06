@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, csv, json, time, signal, shutil, traceback
+import os, sys, csv, json, time, signal, shutil, traceback, subprocess, shlex
 from pathlib import Path
 from datetime import datetime
 from PIL import Image
@@ -7,17 +7,25 @@ from pycoral.adapters import detect, common
 from pycoral.utils.dataset import read_label_file
 from pycoral.utils.edgetpu import make_interpreter, list_edge_tpus
 
+# ======== 基本設定 ========
 MODEL_PATH   = os.environ.get("MODEL",  "/app/test_data/model.tflite")
 LABELS_PATH  = os.environ.get("LABELS", "/app/test_data/coco_labels.txt")
-DATA_ROOT    = Path(os.environ.get("DATA_ROOT", "/data"))
-EVENTS_ROOT  = Path(os.environ.get("EVENTS_ROOT", "/events"))
+DATA_ROOT    = Path(os.environ.get("DATA_ROOT", "/data"))      # Zaku01 傳來 ZIP 解壓後的批次根目錄
+EVENTS_ROOT  = Path(os.environ.get("EVENTS_ROOT", "/events"))  # 偵測到 person 才搬到這裡
 LOGS_ROOT    = Path(os.environ.get("LOGS_ROOT", "/logs"))
 THRESHOLD    = float(os.environ.get("THRESHOLD", "0.3"))
 SLEEP_SEC    = int(os.environ.get("SLEEP_SEC", "10"))
-STABLE_SEC   = int(os.environ.get("STABLE_SEC", "15"))
+STABLE_SEC   = int(os.environ.get("STABLE_SEC", "15"))         # 批次目錄內最近檔案 mtime 穩定時間
 STATE_PATH   = Path(os.environ.get("STATE_PATH", "/logs/worker_state.json"))
 DEBUG        = os.environ.get("DEBUG", "0") == "1"
-MIN_IMAGES   = int(os.environ.get("MIN_IMAGES", "1"))   # require at least this many images before scanning
+MIN_IMAGES   = int(os.environ.get("MIN_IMAGES", "1"))          # 每批最少張數才處理
+
+# ======== 上傳設定（Google Drive Web App） ========
+GAS_UPLOAD_URL   = os.environ.get("GAS_UPLOAD_URL", "")        # 你的 /exec URL（必填）
+GAS_UPLOAD_HELPER = os.environ.get("GAS_UPLOAD_HELPER", "/usr/local/bin/zaku02_upload_drive.sh")
+UPLOAD_MARK_EXT  = os.environ.get("UPLOAD_MARK_EXT", ".upl")   # 成功上傳後的 sidecar 標記
+UPLOAD_RETRIES   = int(os.environ.get("UPLOAD_RETRIES", "3"))
+UPLOAD_ENABLED   = os.environ.get("UPLOAD_ENABLED", "1") == "1"
 
 IMG_EXTS = {".jpg", ".jpeg", ".png"}
 _running = True
@@ -66,9 +74,8 @@ def newest_image_mtime(folder: Path) -> float:
 
 def choose_latest_ready_folder(root: Path):
     """
-    Among direct subfolders of root, pick the one whose newest image mtime is the most recent,
-    provided it has >= MIN_IMAGES images and is stable for >= STABLE_SEC.
-    Return (folder_path, newest_mtime, num_images) or (None, 0.0, 0)
+    從 root 的直接子目錄中，挑選最近且已穩定（STABLE_SEC），且張數 >= MIN_IMAGES 的批次目錄
+    回傳: (folder_path, newest_mtime, num_images) 或 (None, 0.0, 0)
     """
     best = (None, 0.0, 0)
     try:
@@ -91,7 +98,6 @@ def choose_latest_ready_folder(root: Path):
         if age < STABLE_SEC:
             if DEBUG: log(f"Skip {d.name}: not stable yet (age {age:.1f}s < {STABLE_SEC}s)")
             continue
-        # pick the most recent (largest m)
         if m > best[1]:
             best = (d, m, n)
     return best
@@ -127,8 +133,44 @@ def move_folder(src: Path, dst_parent: Path) -> Path:
     shutil.move(str(src), str(target))
     return target
 
+# ======== 上傳到 Google Drive Web App ========
+def _mark_path(p: Path) -> Path:
+    return p.with_suffix(p.suffix + UPLOAD_MARK_EXT)
+
+def upload_image_to_drive(img_path: Path) -> bool:
+    if not UPLOAD_ENABLED:
+        if DEBUG: log(f"Upload disabled, skipping: {img_path}")
+        return False
+    if not GAS_UPLOAD_URL:
+        warn("GAS_UPLOAD_URL not set; skip upload")
+        return False
+    if not img_path.is_file():
+        warn(f"Upload skip (not found): {img_path}")
+        return False
+    mark = _mark_path(img_path)
+    if mark.exists():
+        if DEBUG: log(f"Already uploaded (mark exists): {img_path}")
+        return True
+
+    cmd = [GAS_UPLOAD_HELPER, GAS_UPLOAD_URL, str(img_path)]
+    for attempt in range(UPLOAD_RETRIES):
+        try:
+            rc = subprocess.run(cmd, check=False)
+            if rc.returncode == 0:
+                try: mark.touch(exist_ok=True)
+                except Exception as me: warn(f"Failed to write mark: {me}")
+                if DEBUG: log(f"Uploaded: {img_path}")
+                return True
+            time.sleep(2 * (attempt + 1))
+        except Exception as e:
+            warn(f"Upload exception ({img_path}): {e}")
+            if DEBUG: traceback.print_exc()
+            time.sleep(2 * (attempt + 1))
+    err(f"Upload failed after {UPLOAD_RETRIES} tries: {img_path}")
+    return False
+
 def main():
-    # Mounts & model
+    # 檢查路徑
     if not DATA_ROOT.exists():
         err(f"DATA_ROOT not found: {DATA_ROOT}")
         sys.exit(2)
@@ -136,10 +178,10 @@ def main():
     ensure_dir(LOGS_ROOT)
     ensure_dir(STATE_PATH.parent)
 
-    # TPU presence check
+    # EdgeTPU
     tpus = list_edge_tpus()
     if not tpus:
-        warn("No EdgeTPU devices found by pycoral (LED may not blink). Check USB mapping.")
+        warn("No EdgeTPU devices found by pycoral. Check USB mapping.")
     else:
         log(f"EdgeTPUs found: {tpus}")
 
@@ -149,7 +191,7 @@ def main():
     log("Interpreter ready.")
 
     state = read_state()
-    log(f"Worker watching {DATA_ROOT} | thr={THRESHOLD} stable={STABLE_SEC}s sleep={SLEEP_SEC}s min_imgs={MIN_IMAGES}")
+    log(f"Watching {DATA_ROOT} | thr={THRESHOLD} stable={STABLE_SEC}s sleep={SLEEP_SEC}s min_imgs={MIN_IMAGES}")
     if state: log(f"Loaded state: {state}")
 
     global _running
@@ -157,24 +199,26 @@ def main():
         try:
             folder, newest_m, count = choose_latest_ready_folder(DATA_ROOT)
             if not folder:
-                if DEBUG: log("No ready folder to process (either empty/unstable/too few images).")
+                if DEBUG: log("No ready folder.")
                 time.sleep(SLEEP_SEC); continue
 
-            # Skip if already processed with same newest_mtime
             last = state.get("last")
             last_m = state.get("last_mtime")
             if last == folder.name and last_m == newest_m:
-                if DEBUG: log(f"Skipping {folder.name}: already processed at mtime {newest_m}.")
+                if DEBUG: log(f"Skip {folder.name}: already processed.")
                 time.sleep(SLEEP_SEC); continue
 
             images = list_images(folder)
-            log(f"Scanning {folder.name}: {len(images)} images (ready; newest age {(time.time()-newest_m):.1f}s)")
+            log(f"Scanning {folder.name}: {len(images)} images (age {(time.time()-newest_m):.1f}s)")
             rows, folder_has_person = [], False
+            person_imgs = []
 
             for i, img in enumerate(images, 1):
                 try:
                     human, score = detect_person_score(interpreter, labels, img, THRESHOLD)
                     folder_has_person |= human
+                    if human:
+                        person_imgs.append(img)
                     rows.append([
                         datetime.utcnow().isoformat(timespec="seconds") + "Z",
                         folder.name, img.name,
@@ -191,15 +235,23 @@ def main():
                     warn(f"Failed on {img}: {e}")
                     if DEBUG: traceback.print_exc()
 
-            # write log lines
+            # CSV
             log_file = LOGS_ROOT / f"events_{datetime.utcnow().strftime('%Y%m%d')}.csv"
             append_csv(log_file, rows)
             log(f"Wrote {len(rows)} rows to {log_file.name}")
 
-            # move or leave
             if folder_has_person:
                 dst = move_folder(folder, EVENTS_ROOT)
-                log(f"PERSON found → moved folder to: {dst}")
+                log(f"PERSON found → moved to: {dst}")
+
+                # 僅上傳偵測為 PERSON 的影像
+                uploaded = 0
+                for old in person_imgs:
+                    new_path = dst / old.name
+                    if upload_image_to_drive(new_path):
+                        uploaded += 1
+                log(f"Uploaded {uploaded}/{len(person_imgs)} PERSON images to Drive Web App")
+
                 state.update({"last": folder.name, "last_mtime": newest_m, "result": "moved"})
             else:
                 log(f"No person in {folder.name} → left in place")

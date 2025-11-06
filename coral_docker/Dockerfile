@@ -48,6 +48,11 @@ COPY detect_person.py /app/detect_person.py
 COPY batch_scan.py /app/batch_scan.py
 COPY worker.py /app/worker.py
 
+# Add Google Drive upload helper
+COPY zaku02_upload_drive.sh /usr/local/bin/zaku02_upload_drive.sh
+RUN chmod +x /usr/local/bin/zaku02_upload_drive.sh
+
+
 # Default:
 CMD ["python3", "/app/worker.py"]
 #CMD ["python3", "/app/batch_scan.py"]
